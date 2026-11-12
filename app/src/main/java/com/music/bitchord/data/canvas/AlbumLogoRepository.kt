@@ -144,7 +144,7 @@ object AlbumLogoRepository {
         }
     }
 
-    private fun recognize(bitmap: Bitmap): List<Pair<String, Rect>> {
+    private suspend fun recognize(bitmap: Bitmap): List<Pair<String, Rect>> {
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         return try {
             val result = recognizer.process(InputImage.fromBitmap(bitmap, 0)).awaitResult()

@@ -357,6 +357,8 @@ dependencies {
     // ---- Images: Coil 3 + Palette (dominant colors for the mesh gradient) ----
     implementation("io.coil-kt.coil3:coil-compose:3.0.4")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
+    // The shared app sources run on-device OCR for automatic album-title logos.
+    implementation("com.google.mlkit:text-recognition:16.0.1")
     // The shared app sources register SvgDecoder (artist signatures).
     implementation("io.coil-kt.coil3:coil-svg:3.0.4")
     // SF Symbols as Compose vectors: the shared app sources draw their menus and
