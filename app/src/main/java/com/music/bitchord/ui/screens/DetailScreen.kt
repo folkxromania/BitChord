@@ -1230,12 +1230,17 @@ private fun AlbumTitleLogo(
             artworkUrl = page.thumbnailUrl,
         )
         if (manual == null && logoUri == null) {
-            logoUri = AlbumLogoRepository.automatic(
+            val automatic = AlbumLogoRepository.automatic(
                 context = context,
                 albumId = page.browseId,
                 albumTitle = page.title,
                 artworkUrl = page.thumbnailUrl,
             )
+            // A gallery selection may finish while OCR is running. Re-read
+            // the manual choice so a slower automatic result cannot overwrite it.
+            val manualAfterLookup = AlbumLogoRepository.manualUri(context, page.browseId)
+            manualLogo = manualAfterLookup != null
+            logoUri = manualAfterLookup ?: automatic
         }
     }
 
