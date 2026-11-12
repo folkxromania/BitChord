@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -60,6 +61,7 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
@@ -68,11 +70,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -100,6 +104,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -113,6 +118,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.border
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
@@ -122,6 +129,7 @@ import coil3.request.ImageRequest
 import coil3.request.transformations
 import androidx.compose.runtime.mutableIntStateOf
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
@@ -132,6 +140,8 @@ import com.music.bitchord.data.matchesSearch
 import com.music.bitchord.data.sortedForLibrary
 import com.music.bitchord.data.useTrackTags
 import com.music.bitchord.ui.components.CoverPlaceholder
+import android.net.Uri
+import com.music.bitchord.data.canvas.AlbumLogoRepository
 import com.music.bitchord.data.canvas.AppleArtistArt
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.canvas.AppleArtistArtRepository
@@ -1041,15 +1051,19 @@ private fun ReleaseHeader(
         }
 
         Spacer(Modifier.height(20.dp))
-        Text(
-            text = page.title,
-            style = MaterialTheme.typography.headlineMedium,
-            color = palette.onBackground,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = HEADER_GUTTER),
-        )
+        if (page.type == BrowseType.ALBUM) {
+            AlbumTitleLogo(page = page, palette = palette)
+        } else {
+            Text(
+                text = page.title,
+                style = MaterialTheme.typography.headlineMedium,
+                color = palette.onBackground,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = HEADER_GUTTER),
+            )
+        }
         if (credit.isNotBlank()) {
             Spacer(Modifier.height(2.dp))
             Text(
@@ -1175,6 +1189,121 @@ private fun ReleaseHeader(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Album-title identity: prefer the cover's own printed lettering when OCR can
+ * confidently find it; otherwise keep the normal title. A gallery image is a
+ * per-album override and is copied into private storage by [AlbumLogoRepository].
+ */
+@Composable
+private fun AlbumTitleLogo(
+    page: DetailPage,
+    palette: ArtworkPalette,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var logoUri by remember(page.browseId) { mutableStateOf<Uri?>(null) }
+    var manualLogo by remember(page.browseId) { mutableStateOf(false) }
+
+    val chooseLogo = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { selected ->
+        if (selected != null) {
+            scope.launch {
+                AlbumLogoRepository.saveManual(context, page.browseId, selected)?.let { saved ->
+                    logoUri = saved
+                    manualLogo = true
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(page.browseId, page.title, page.thumbnailUrl) {
+        val manual = AlbumLogoRepository.manualUri(context, page.browseId)
+        manualLogo = manual != null
+        logoUri = manual ?: AlbumLogoRepository.cachedAutomatic(
+            context = context,
+            albumId = page.browseId,
+            artworkUrl = page.thumbnailUrl,
+        )
+        if (manual == null && logoUri == null) {
+            logoUri = AlbumLogoRepository.automatic(
+                context = context,
+                albumId = page.browseId,
+                albumTitle = page.title,
+                artworkUrl = page.thumbnailUrl,
+            )
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp, max = 104.dp)
+            .padding(horizontal = HEADER_GUTTER),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (logoUri != null) {
+            AsyncImage(
+                model = logoUri,
+                contentDescription = page.title,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 38.dp)
+                    .heightIn(max = 96.dp),
+            )
+        } else {
+            Text(
+                text = page.title,
+                style = MaterialTheme.typography.headlineMedium,
+                color = palette.onBackground,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 38.dp),
+            )
+        }
+
+        IconButton(
+            onClick = { chooseLogo.launch("image/*") },
+            modifier = Modifier.align(Alignment.CenterEnd),
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Image,
+                contentDescription = "Choose album logo from gallery",
+                tint = palette.onBackgroundVariant,
+            )
+        }
+    }
+
+    if (manualLogo) {
+        TextButton(
+            onClick = {
+                AlbumLogoRepository.clearManual(context, page.browseId)
+                manualLogo = false
+                scope.launch {
+                    logoUri = AlbumLogoRepository.cachedAutomatic(
+                        context,
+                        page.browseId,
+                        page.thumbnailUrl,
+                    ) ?: AlbumLogoRepository.automatic(
+                        context,
+                        page.browseId,
+                        page.title,
+                        page.thumbnailUrl,
+                    )
+                }
+            },
+        ) {
+            Text(
+                text = "Restore automatic logo",
+                color = palette.onBackgroundVariant,
+                style = MaterialTheme.typography.labelMedium,
+            )
         }
     }
 }
