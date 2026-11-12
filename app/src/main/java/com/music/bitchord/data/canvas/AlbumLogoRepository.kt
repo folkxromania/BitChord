@@ -56,7 +56,7 @@ object AlbumLogoRepository {
         withContext(Dispatchers.IO) {
             runCatching {
                 val input = context.contentResolver.openInputStream(source) ?: return@runCatching null
-                val file = File(directory(context), "manual_\${digest(albumId)}.image")
+                val file = File(directory(context), "manual_${digest(albumId)}.image")
                 input.use { stream ->
                     FileOutputStream(file).use { output -> stream.copyTo(output) }
                 }
@@ -224,10 +224,10 @@ object AlbumLogoRepository {
     private fun preferences(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    private fun manualKey(albumId: String) = "manual_\${digest(albumId)}"
+    private fun manualKey(albumId: String) = "manual_${digest(albumId)}"
 
     private fun automaticKey(albumId: String, artworkUrl: String?) =
-        digest("$albumId\n\${artworkUrl.orEmpty()}")
+        digest("$albumId\n${artworkUrl.orEmpty()}")
 
     private fun digest(value: String): String =
         MessageDigest.getInstance("SHA-256")
