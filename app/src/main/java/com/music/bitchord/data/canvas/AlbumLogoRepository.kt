@@ -56,7 +56,16 @@ object AlbumLogoRepository {
         withContext(Dispatchers.IO) {
             runCatching {
                 val input = context.contentResolver.openInputStream(source) ?: return@runCatching null
-                val file = File(directory(context), "manual_${digest(albumId)}.image")
+                val mimeType = context.contentResolver.getType(source)
+                val extension = when (mimeType) {
+                    "image/png" -> "png"
+                    "image/webp" -> "webp"
+                    "image/gif" -> "gif"
+                    "image/heic" -> "heic"
+                    "image/heif" -> "heif"
+                    else -> "jpg"
+                }
+                val file = File(directory(context), "manual_${digest(albumId)}.$extension")
                 input.use { stream ->
                     FileOutputStream(file).use { output -> stream.copyTo(output) }
                 }
