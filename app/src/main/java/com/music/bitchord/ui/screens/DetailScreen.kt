@@ -61,7 +61,6 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Favorite
-import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
@@ -70,13 +69,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -104,7 +101,6 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -118,8 +114,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.border
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
@@ -140,7 +134,6 @@ import com.music.bitchord.data.matchesSearch
 import com.music.bitchord.data.sortedForLibrary
 import com.music.bitchord.data.useTrackTags
 import com.music.bitchord.ui.components.CoverPlaceholder
-import android.net.Uri
 import com.music.bitchord.data.canvas.AlbumLogoRepository
 import com.music.bitchord.data.canvas.AppleArtistArt
 import com.music.bitchord.data.DebugLog as Log
@@ -377,6 +370,8 @@ fun DetailScreen(
      * [ArtworkPalette] so it reads as this page rather than a sheet over it.
      */
     reorder: (@Composable (ArtworkPalette) -> Unit)? = null,
+    /** Bumped by the host when the user changes or restores this album's logo. */
+    albumLogoRevision: Int = 0,
 ) {
     val rawSongs = (page.songs as? UiState.Success)?.data.orEmpty()
     // A folder keeps its own sort — the one its top bar menu sets — rather
@@ -604,6 +599,7 @@ fun DetailScreen(
                         fullBleed = fullBleedSleeve,
                         canvas = canvas,
                         songs = songs,
+                        albumLogoRevision = albumLogoRevision,
                         onPlay = { onSongClick(songs, 0) },
                         onShuffle = { onShuffle(songs) },
                         // A folder's credit says where its tracks live, not who made them.
@@ -934,6 +930,7 @@ private fun ReleaseHeader(
     fullBleed: Boolean,
     canvas: CanvasArtwork?,
     songs: List<Song>,
+    albumLogoRevision: Int,
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
     onArtistClick: ((String, String) -> Unit)?,
@@ -1052,7 +1049,13 @@ private fun ReleaseHeader(
 
         Spacer(Modifier.height(20.dp))
         if (page.type == BrowseType.ALBUM) {
-            AlbumTitleLogo(page = page, palette = palette)
+            AlbumTitleLogo(
+                page = page,
+                palette = palette,
+                artistName = artist?.artists?.firstOrNull()?.name
+                    ?: artist?.artist?.substringBefore(",")?.trim().orEmpty(),
+                refreshKey = albumLogoRevision,
+            )
         } else {
             Text(
                 text = page.title,
@@ -1202,31 +1205,19 @@ private fun ReleaseHeader(
 private fun AlbumTitleLogo(
     page: DetailPage,
     palette: ArtworkPalette,
+    artistName: String,
+    refreshKey: Int,
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     var logoUri by remember(page.browseId) { mutableStateOf<Uri?>(null) }
-    var manualLogo by remember(page.browseId) { mutableStateOf(false) }
 
-    val chooseLogo = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent(),
-    ) { selected ->
-        if (selected != null) {
-            scope.launch {
-                AlbumLogoRepository.saveManual(context, page.browseId, selected)?.let { saved ->
-                    logoUri = saved
-                    manualLogo = true
-                }
-            }
-        }
-    }
-
-    LaunchedEffect(page.browseId, page.title, page.thumbnailUrl) {
+    LaunchedEffect(page.browseId, page.title, page.thumbnailUrl, artistName, refreshKey) {
         val manual = AlbumLogoRepository.manualUri(context, page.browseId)
-        manualLogo = manual != null
         logoUri = manual ?: AlbumLogoRepository.cachedAutomatic(
             context = context,
             albumId = page.browseId,
+            albumTitle = page.title,
+            artistName = artistName,
             artworkUrl = page.thumbnailUrl,
         )
         if (manual == null && logoUri == null) {
@@ -1234,12 +1225,11 @@ private fun AlbumTitleLogo(
                 context = context,
                 albumId = page.browseId,
                 albumTitle = page.title,
+                artistName = artistName,
                 artworkUrl = page.thumbnailUrl,
             )
-            // A gallery selection may finish while OCR is running. Re-read
-            // the manual choice so a slower automatic result cannot overwrite it.
+            // A manual choice made while lookup is running always wins.
             val manualAfterLookup = AlbumLogoRepository.manualUri(context, page.browseId)
-            manualLogo = manualAfterLookup != null
             logoUri = manualAfterLookup ?: automatic
         }
     }
@@ -1247,7 +1237,7 @@ private fun AlbumTitleLogo(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp, max = 104.dp)
+            .heightIn(min = 48.dp, max = 88.dp)
             .padding(horizontal = HEADER_GUTTER),
         contentAlignment = Alignment.Center,
     ) {
@@ -1257,9 +1247,8 @@ private fun AlbumTitleLogo(
                 contentDescription = page.title,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 38.dp)
-                    .heightIn(max = 96.dp),
+                    .widthIn(max = 280.dp)
+                    .heightIn(max = 72.dp),
             )
         } else {
             Text(
@@ -1269,45 +1258,7 @@ private fun AlbumTitleLogo(
                 textAlign = TextAlign.Center,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 38.dp),
-            )
-        }
-
-        IconButton(
-            onClick = { chooseLogo.launch("image/*") },
-            modifier = Modifier.align(Alignment.CenterEnd),
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Image,
-                contentDescription = "Choose album logo from gallery",
-                tint = palette.onBackgroundVariant,
-            )
-        }
-    }
-
-    if (manualLogo) {
-        TextButton(
-            onClick = {
-                AlbumLogoRepository.clearManual(context, page.browseId)
-                manualLogo = false
-                scope.launch {
-                    logoUri = AlbumLogoRepository.cachedAutomatic(
-                        context,
-                        page.browseId,
-                        page.thumbnailUrl,
-                    ) ?: AlbumLogoRepository.automatic(
-                        context,
-                        page.browseId,
-                        page.title,
-                        page.thumbnailUrl,
-                    )
-                }
-            },
-        ) {
-            Text(
-                text = "Restore automatic logo",
-                color = palette.onBackgroundVariant,
-                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(horizontal = 16.dp),
             )
         }
     }

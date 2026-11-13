@@ -323,68 +323,82 @@ internal fun topBandScrimAlpha(artworkLuminance: Float?): Float {
 private const val PLAYER_STATUS_SCRIM_MIN_ALPHA = 0.16f
 private const val PLAYER_STATUS_SCRIM_MAX_ALPHA = 0.65f
 
-private fun Seed.toPalette(dark: Boolean): ArtworkPalette = if (dark) {
-    ArtworkPalette(
-        // Deep enough that white body text clears contrast on any sleeve, but
-        // not so deep the hue is gone — the whole point is that the page is
-        // recognisably *this* record's colour.
-        background = dominant.withHsl(
-            saturation = { adaptedArtworkSaturation(it, minimum = 0.20f, maximum = 0.62f) },
-            lightness = { 0.13f },
-        ),
-        // Follows the edge's own brightness within a band that stays clear of
-        // white body text at the top and of [background] at the bottom: a
-        // sleeve that ends dark hands over almost invisibly, one that ends
-        // bright leaves a page that is visibly lit from under the artwork.
-        wash = edge.withHsl(
+private fun Seed.toPalette(dark: Boolean): ArtworkPalette {
+    // Keep the cover's hue and relative brightness. The old fixed HSL values
+    // (0.13 in dark mode, 0.91 in light mode) made every release page converge
+    // on nearly the same darkness, regardless of the sleeve it came from.
+    val background = dominant.withHsl(
+        saturation = { artworkSurfaceSaturation(it) },
+        lightness = { artworkSurfaceLightness(it, dark) },
+    )
+    val onBackground = readableArtworkTextColor(background)
+    val onBackgroundVariant = onBackground.copy(alpha = 0.82f)
+    val elevated = background.withHsl(
+        lightness = {
+            if (dark) (it + 0.055f).coerceAtMost(0.36f)
+            else (it - 0.055f).coerceAtLeast(0.62f)
+        },
+    )
+
+    val wash = if (dark) {
+        edge.withHsl(
             saturation = { adaptedArtworkSaturation(it, minimum = 0.18f, maximum = 0.58f) },
             lightness = { it.coerceIn(0.14f, 0.24f) },
-        ),
-        elevated = dominant.withHsl(
-            saturation = { adaptedArtworkSaturation(it, minimum = 0.20f, maximum = 0.62f) },
-            lightness = { 0.22f },
-        ),
-        accent = vibrant.withHsl(
-            saturation = { adaptedArtworkSaturation(it, minimum = 0.55f, maximum = 1f) },
-            lightness = { it.coerceIn(0.62f, 0.78f) },
-        ),
-        onBackground = Color.White,
-        // A pale tint of the page's own hue rather than a translucent white —
-        // Apple Music's secondary lines are the sleeve's colour, lifted, so a
-        // blue record's credits read light blue on its blue page. Bright
-        // enough that it still clears contrast on [background].
-        onBackgroundVariant = dominant.withHsl(
-            saturation = { adaptedArtworkSaturation(it, minimum = 0.22f, maximum = 0.50f) },
-            lightness = { 0.80f },
-        ),
-        divider = Color.White.copy(alpha = 0.12f),
-    )
-} else {
-    ArtworkPalette(
-        background = dominant.withHsl(
-            saturation = { adaptedArtworkSaturation(it, minimum = 0.14f, maximum = 0.50f) },
-            lightness = { 0.91f },
-        ),
-        wash = edge.withHsl(
+        )
+    } else {
+        edge.withHsl(
             saturation = { adaptedArtworkSaturation(it, minimum = 0.12f, maximum = 0.46f) },
             lightness = { it.coerceIn(0.78f, 0.90f) },
-        ),
-        elevated = dominant.withHsl(
-            saturation = { adaptedArtworkSaturation(it, minimum = 0.14f, maximum = 0.50f) },
-            lightness = { 0.83f },
-        ),
-        accent = vibrant.withHsl(
+        )
+    }
+    val accent = if (dark) {
+        vibrant.withHsl(
+            saturation = { adaptedArtworkSaturation(it, minimum = 0.55f, maximum = 1f) },
+            lightness = { it.coerceIn(0.62f, 0.78f) },
+        )
+    } else {
+        vibrant.withHsl(
             saturation = { adaptedArtworkSaturation(it, minimum = 0.55f, maximum = 1f) },
             lightness = { it.coerceIn(0.30f, 0.44f) },
-        ),
-        onBackground = Color.Black,
-        // The same hue taken down rather than up, for the pale page.
-        onBackgroundVariant = dominant.withHsl(
-            saturation = { adaptedArtworkSaturation(it, minimum = 0.22f, maximum = 0.55f) },
-            lightness = { 0.34f },
-        ),
-        divider = Color.Black.copy(alpha = 0.10f),
+        )
+    }
+
+    return ArtworkPalette(
+        background = background,
+        wash = wash,
+        elevated = elevated,
+        accent = accent,
+        onBackground = onBackground,
+        onBackgroundVariant = onBackgroundVariant,
+        divider = onBackground.copy(alpha = if (dark) 0.12f else 0.10f),
     )
+}
+
+/** Maps source brightness into a theme-safe range without flattening every cover to one value. */
+internal fun artworkSurfaceLightness(source: Float, dark: Boolean): Float {
+    val lightness = source.coerceIn(0f, 1f)
+    return if (dark) {
+        (0.085f + lightness * 0.22f).coerceIn(0.085f, 0.305f)
+    } else {
+        (0.68f + lightness * 0.19f).coerceIn(0.68f, 0.87f)
+    }
+}
+
+/** Caps excessive saturation but never manufactures colour in a muted sleeve. */
+internal fun artworkSurfaceSaturation(source: Float): Float = source.coerceIn(0f, 0.58f)
+
+/** Chooses whichever neutral text colour clears the stronger WCAG contrast ratio. */
+internal fun readableArtworkTextColor(background: Color): Color =
+    if (contrastRatio(Color.White, background) >= contrastRatio(Color.Black, background)) {
+        Color.White
+    } else {
+        Color.Black
+    }
+
+internal fun contrastRatio(foreground: Color, background: Color): Float {
+    val first = ColorUtils.calculateLuminance(foreground.toArgb()).toFloat()
+    val second = ColorUtils.calculateLuminance(background.toArgb()).toFloat()
+    return (maxOf(first, second) + 0.05f) / (minOf(first, second) + 0.05f)
 }
 
 /**

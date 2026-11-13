@@ -129,6 +129,7 @@ import com.music.bitchord.auth.SpotifyLoginScreen
 import com.music.bitchord.auth.WebSessionMode
 import com.music.bitchord.auth.YtMusicLoginScreen
 import com.music.bitchord.data.AppUpdateChecker
+import com.music.bitchord.data.canvas.AlbumLogoRepository
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.listentogether.JamInviteLink
 import com.music.bitchord.data.listentogether.ListenTogether
@@ -749,6 +750,9 @@ private fun BitChordApp(
     // three tabs, the search rows, the artist page's carousels, the release
     // page's own overflow — because only one of them can be held at a time.
     var browseActions by remember { mutableStateOf<BrowseTarget?>(null) }
+    // Album wordmark selection is handled by the same three-dot menu as the other release actions.
+    var albumLogoPickerTarget by remember { mutableStateOf<BrowseTarget?>(null) }
+    var albumLogoRevision by remember { mutableIntStateOf(0) }
     /** The card held to open [browseActions] — see [songMenuOrigin]. */
     var browseMenuOrigin by remember { mutableStateOf<HeldItem?>(null) }
     /** The ⋯ [browseActions] was opened from — see [songMenuAnchor]. */
@@ -1354,6 +1358,24 @@ private fun BitChordApp(
     }
 
     val scope = rememberCoroutineScope()
+
+    val albumLogoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { selected ->
+        val target = albumLogoPickerTarget
+        albumLogoPickerTarget = null
+        val albumId = target?.browseId
+        if (selected != null && albumId != null) {
+            scope.launch {
+                val saved = AlbumLogoRepository.saveManual(context, albumId, selected)
+                if (saved != null) {
+                    albumLogoRevision++
+                } else {
+                    Toast.makeText(context, context.getString(R.string.failed), Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     // Copies tracks to the WebDAV server, leaving the local files alone.
     // A clash suspends the batch on WebDavUploads.conflict until the dialog
@@ -3271,6 +3293,7 @@ private fun BitChordApp(
                             val reordering = reorderTarget?.takeIf { it.browseId == page.browseId }
                             DetailScreen(
                                 page = page,
+                                albumLogoRevision = albumLogoRevision,
                                 currentSong = player.song,
                                 isPlaying = player.isPlaying,
                                 listState = pageDetailListState,
@@ -5165,6 +5188,30 @@ private fun BitChordApp(
                                 putExtra(Intent.EXTRA_TEXT, url)
                             }
                             context.startActivity(Intent.createChooser(sendIntent, target.title))
+                            browseActions = null
+                        }
+                    },
+                onChooseAlbumLogo = if (
+                    target.type == BrowseType.ALBUM &&
+                    target.browseId != null &&
+                    target.browseId == detail?.browseId
+                ) {
+                    {
+                        browseActions = null
+                        albumLogoPickerTarget = target
+                        albumLogoPicker.launch("image/*")
+                    }
+                } else null,
+                onRestoreAlbumLogo = target.browseId
+                    ?.takeIf {
+                        target.type == BrowseType.ALBUM &&
+                            it == detail?.browseId &&
+                            AlbumLogoRepository.manualUri(context, it) != null
+                    }
+                    ?.let { albumId ->
+                        {
+                            AlbumLogoRepository.clearManual(context, albumId)
+                            albumLogoRevision++
                             browseActions = null
                         }
                     },
