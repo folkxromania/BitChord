@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.theme
 
 import androidx.compose.ui.graphics.Color
+import com.music.bitchord.ui.graphics.ColorUtils
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
