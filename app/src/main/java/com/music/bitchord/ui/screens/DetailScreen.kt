@@ -2,6 +2,7 @@ package com.music.bitchord.ui.screens
 
 import com.music.bitchord.ui.components.trackArtSize
 import android.os.Build
+import android.net.Uri
 import com.music.bitchord.R
 
 import androidx.compose.animation.AnimatedContent
@@ -30,6 +31,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -101,6 +103,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -122,6 +125,7 @@ import coil3.request.ImageRequest
 import coil3.request.transformations
 import androidx.compose.runtime.mutableIntStateOf
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
@@ -132,6 +136,7 @@ import com.music.bitchord.data.matchesSearch
 import com.music.bitchord.data.sortedForLibrary
 import com.music.bitchord.data.useTrackTags
 import com.music.bitchord.ui.components.CoverPlaceholder
+import com.music.bitchord.data.canvas.AlbumLogoRepository
 import com.music.bitchord.data.canvas.AppleArtistArt
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.canvas.AppleArtistArtRepository
@@ -367,6 +372,8 @@ fun DetailScreen(
      * [ArtworkPalette] so it reads as this page rather than a sheet over it.
      */
     reorder: (@Composable (ArtworkPalette) -> Unit)? = null,
+    /** Bumped by the host when the user changes or restores this album's logo. */
+    albumLogoRevision: Int = 0,
 ) {
     val rawSongs = (page.songs as? UiState.Success)?.data.orEmpty()
     // A folder keeps its own sort — the one its top bar menu sets — rather
@@ -594,6 +601,7 @@ fun DetailScreen(
                         fullBleed = fullBleedSleeve,
                         canvas = canvas,
                         songs = songs,
+                        albumLogoRevision = albumLogoRevision,
                         onPlay = { onSongClick(songs, 0) },
                         onShuffle = { onShuffle(songs) },
                         // A folder's credit says where its tracks live, not who made them.
@@ -924,6 +932,7 @@ private fun ReleaseHeader(
     fullBleed: Boolean,
     canvas: CanvasArtwork?,
     songs: List<Song>,
+    albumLogoRevision: Int,
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
     onArtistClick: ((String, String) -> Unit)?,
@@ -1041,15 +1050,25 @@ private fun ReleaseHeader(
         }
 
         Spacer(Modifier.height(20.dp))
-        Text(
-            text = page.title,
-            style = MaterialTheme.typography.headlineMedium,
-            color = palette.onBackground,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = HEADER_GUTTER),
-        )
+        if (page.type == BrowseType.ALBUM) {
+            AlbumTitleLogo(
+                page = page,
+                palette = palette,
+                artistName = artist?.artists?.firstOrNull()?.name
+                    ?: artist?.artist?.substringBefore(",")?.trim().orEmpty(),
+                refreshKey = albumLogoRevision,
+            )
+        } else {
+            Text(
+                text = page.title,
+                style = MaterialTheme.typography.headlineMedium,
+                color = palette.onBackground,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = HEADER_GUTTER),
+            )
+        }
         if (credit.isNotBlank()) {
             Spacer(Modifier.height(2.dp))
             Text(
@@ -1175,6 +1194,74 @@ private fun ReleaseHeader(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Album-title identity: prefer the cover's own printed lettering when OCR can
+ * confidently find it; otherwise keep the normal title. A gallery image is a
+ * per-album override and is copied into private storage by [AlbumLogoRepository].
+ */
+@Composable
+private fun AlbumTitleLogo(
+    page: DetailPage,
+    palette: ArtworkPalette,
+    artistName: String,
+    refreshKey: Int,
+) {
+    val context = LocalContext.current
+    var logoUri by remember(page.browseId) { mutableStateOf<Uri?>(null) }
+
+    LaunchedEffect(page.browseId, page.title, page.thumbnailUrl, artistName, refreshKey) {
+        val manual = AlbumLogoRepository.manualUri(context, page.browseId)
+        logoUri = manual ?: AlbumLogoRepository.cachedAutomatic(
+            context = context,
+            albumId = page.browseId,
+            albumTitle = page.title,
+            artistName = artistName,
+            artworkUrl = page.thumbnailUrl,
+        )
+        if (manual == null && logoUri == null) {
+            val automatic = AlbumLogoRepository.automatic(
+                context = context,
+                albumId = page.browseId,
+                albumTitle = page.title,
+                artistName = artistName,
+                artworkUrl = page.thumbnailUrl,
+            )
+            // A manual choice made while lookup is running always wins.
+            val manualAfterLookup = AlbumLogoRepository.manualUri(context, page.browseId)
+            logoUri = manualAfterLookup ?: automatic
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp, max = 88.dp)
+            .padding(horizontal = HEADER_GUTTER),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (logoUri != null) {
+            AsyncImage(
+                model = logoUri,
+                contentDescription = page.title,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .heightIn(max = 72.dp),
+            )
+        } else {
+            Text(
+                text = page.title,
+                style = MaterialTheme.typography.headlineMedium,
+                color = palette.onBackground,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
         }
     }
 }

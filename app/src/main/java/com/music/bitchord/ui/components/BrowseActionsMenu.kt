@@ -119,6 +119,10 @@ fun BrowseActionsMenu(
      * from something other than a real browse id (a Local Music grouping).
      */
     onShare: (() -> Unit)? = null,
+    /** Manual logo override, offered only on the open album's own overflow menu. */
+    onChooseAlbumLogo: (() -> Unit)? = null,
+    /** Removes the manual override and returns to the verified automatic result. */
+    onRestoreAlbumLogo: (() -> Unit)? = null,
     /**
      * Set whenever [target] is a playlist, regardless of who owns it — pinning
      * doesn't touch the account, only what sits at the top of this device's
@@ -234,6 +238,12 @@ fun BrowseActionsMenu(
             }
             onShare?.let {
                 ActionRow(SfIcons.Share, stringResource(R.string.share), onClick = it)
+            }
+            onChooseAlbumLogo?.let {
+                ActionRow(SfIcons.Upload, stringResource(R.string.choose_file), onClick = it)
+            }
+            onRestoreAlbumLogo?.let {
+                ActionRow(SfIcons.Revert, stringResource(R.string.reset_to_default), onClick = it)
             }
             onTogglePin?.let {
                 ActionRow(
