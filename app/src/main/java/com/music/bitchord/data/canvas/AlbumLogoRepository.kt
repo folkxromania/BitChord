@@ -230,8 +230,10 @@ object AlbumLogoRepository {
             val aspect = box.width().toFloat() / box.height().toFloat()
             if (aspect !in MIN_LOGO_ASPECT..MAX_LOGO_ASPECT) return@mapNotNull null
             Triple(score, box, box.width().toLong() * box.height())
-        }.minWithOrNull(
-            compareByDescending<Triple<Float, Rect, Long>> { it.first }.thenBy { it.third },
+        }.maxWithOrNull(
+            // If the same title appears more than once (for example in a
+            // tracklist), prefer the largest legible title treatment.
+            compareBy<Triple<Float, Rect, Long>> { it.first }.thenBy { it.third },
         )
         return best?.second
     }
