@@ -135,7 +135,7 @@ object AlbumLogoRepository {
         artistName: String,
         artworkUrl: String?,
     ): Uri? = withContext(Dispatchers.IO) {
-        if (albumId.isBlank() || albumTitle.isBlank() || artworkUrl.isNullOrBlank()) {
+        if (albumId.isBlank() || albumTitle.isBlank()) {
             return@withContext null
         }
 
@@ -158,6 +158,10 @@ object AlbumLogoRepository {
         }
         val commonsUnavailable = commonsResult.isFailure
 
+        if (artworkUrl.isNullOrBlank()) {
+            if (!commonsUnavailable) markAutomaticMiss(prefs, key)
+            return@withContext null
+        }
         val bytes = readArtwork(context, artworkUrl) ?: return@withContext null
         val bitmap = decode(bytes) ?: return@withContext null
         try {
@@ -240,14 +244,14 @@ object AlbumLogoRepository {
     ): Result<Bitmap?> = runCatching {
         if (artistName.isBlank()) return@runCatching null
 
-        val query = "\"" + albumTitle + "\" \"" + artistName + "\" logo"
+        val query = "\"" + albumTitle + "\" \"" + artistName + "\""
         val apiUri = Uri.parse("https://commons.wikimedia.org/w/api.php").buildUpon()
             .appendQueryParameter("action", "query")
             .appendQueryParameter("format", "json")
             .appendQueryParameter("generator", "search")
             .appendQueryParameter("gsrnamespace", "6")
             .appendQueryParameter("gsrsearch", query)
-            .appendQueryParameter("gsrlimit", "20")
+            .appendQueryParameter("gsrlimit", "50")
             .appendQueryParameter("prop", "imageinfo|categories")
             .appendQueryParameter("iiprop", "url|size|mime|extmetadata")
             .appendQueryParameter("iiurlwidth", "1600")
@@ -290,12 +294,17 @@ object AlbumLogoRepository {
                 }
             }
 
-            val searchable = normalize(
-                listOf(page.optString("title"), description, objectName, creditedArtist, source, categoryText)
-                    .joinToString(" "),
+            // Keep album evidence separate from artist evidence. Otherwise a
+            // title token appearing only in a source URL or artist field could
+            // make a different edition look like a match.
+            val titleEvidence = normalize(
+                listOf(page.optString("title"), description, objectName).joinToString(" "),
             )
-            if (albumTokens.any { it !in searchable }) continue
-            if (artistTokens.isNotEmpty() && artistTokens.any { it !in searchable }) continue
+            val artistEvidence = normalize(
+                listOf(creditedArtist, source, categoryText, description).joinToString(" "),
+            )
+            if (albumTokens.any { it !in titleEvidence }) continue
+            if (artistTokens.isNotEmpty() && artistTokens.any { it !in artistEvidence }) continue
             if (!isAllowedCommonsLicense(license, licenseUrl)) continue
 
             val mime = imageInfo.optString("mime")
